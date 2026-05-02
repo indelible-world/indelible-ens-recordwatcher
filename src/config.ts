@@ -1,4 +1,8 @@
 import "dotenv/config";
+import {
+  ENS_INDELIBLE_ADDRESS,
+  ENS_REGISTRY_ADDRESS,
+} from "@indelible-world/indelible-protocol";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -15,12 +19,13 @@ export const config = {
   /** Private key of the account that will call removeEnsBinding */
   privateKey: requireEnv("PRIVATE_KEY") as `0x${string}`,
 
-  /** Deployed IndelibleENS contract address */
-  indelibleEnsAddress: requireEnv("INDELIBLE_ENS_ADDRESS") as `0x${string}`,
+  /** Deployed IndelibleENS contract address — defaults to the canonical protocol address */
+  indelibleEnsAddress: (process.env.INDELIBLE_ENS_ADDRESS ??
+    ENS_INDELIBLE_ADDRESS) as `0x${string}`,
 
-  /** ENS Registry address (mainnet default) */
+  /** ENS Registry address — defaults to the canonical address from indelible-protocol */
   ensRegistryAddress: (process.env.ENS_REGISTRY_ADDRESS ??
-    "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e") as `0x${string}`,
+    ENS_REGISTRY_ADDRESS) as `0x${string}`,
 
   /**
    * Known ENS resolver addresses to watch for TextChanged events.

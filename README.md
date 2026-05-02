@@ -16,7 +16,7 @@ Can be run by Indelible or any third party — the `removeEnsBinding` function i
 ```bash
 npm install
 cp .env.example .env
-# Edit .env with your RPC URL, private key, and contract address
+# Edit .env with your RPC URL & private key
 ```
 
 ## Run

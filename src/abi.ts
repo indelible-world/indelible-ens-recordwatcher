@@ -1,40 +1,6 @@
-// IndelibleENS contract ABI (only the functions/events we need)
-export const indelibleEnsAbi = [
-  {
-    inputs: [{ name: "node", type: "bytes32" }],
-    name: "resolveIndelibleAddress",
-    outputs: [{ name: "", type: "address" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [{ name: "", type: "uint256" }],
-    name: "verifications",
-    outputs: [
-      { name: "authority", type: "address" },
-      { name: "node", type: "bytes32" },
-      { name: "dnsName", type: "bytes" },
-      { name: "startTimestamp", type: "uint256" },
-      { name: "endTimestamp", type: "uint256" },
-    ],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [{ name: "", type: "bytes32" }],
-    name: "nodeToBinding",
-    outputs: [{ name: "", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [{ name: "node", type: "bytes32" }],
-    name: "removeEnsBinding",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-] as const;
+// IndelibleENS contract ABI — sourced from @indelible-world/indelible-protocol
+import ensAbiJson from "@indelible-world/indelible-protocol/abi/ens";
+export const indelibleEnsAbi = ensAbiJson as typeof ensAbiJson;
 
 // ENS PublicResolver TextChanged event ABI
 export const resolverTextChangedAbi = [
