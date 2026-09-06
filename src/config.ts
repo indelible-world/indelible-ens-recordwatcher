@@ -1,8 +1,5 @@
 import "dotenv/config";
-import {
-  ENS_INDELIBLE_ADDRESS,
-  ENS_REGISTRY_ADDRESS,
-} from "@indelible-world/indelible-protocol";
+import { ENS_INDELIBLE_ADDRESS, ENS_REGISTRY_ADDRESS } from "indelible";
 
 function requireEnv(name: string): string {
   const value = process.env[name];

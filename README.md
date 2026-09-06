@@ -1,14 +1,16 @@
 # indelible-ens-recordwatcher
 
-Watches for ENS `indelible-address` text record changes and automatically revokes stale bindings on the IndelibleENS contract by calling `removeEnsBinding(node)`.
+Watches for ENS `indelible-address` text record changes and automatically revokes stale bindings on the IndelibleENS (ENSv2) contract by calling `removeEnsBinding(node)`.
 
 Can be run by Indelible or any third party — the `removeEnsBinding` function is permissionless.
+
+Built on top of the [`indelible`](https://www.npmjs.com/package/indelible) npm package, which provides the ENSv2-aware reads (`ens.getBindingByNode`, `ens.resolveIndelibleAddress`, `ens.getVerification`) and the ENS contract ABI/address used here.
 
 ## How it works
 
 1. **Event watching** — Listens for `TextChanged` events on configured ENS resolver contracts, filtering for the `indelible-address` key. Also watches `NewResolver` events on the ENS Registry to catch resolver swaps.
-2. **Staleness check** — When a change is detected, reads the on-chain binding and compares the stored `authority` to the current `resolveIndelibleAddress(node)` result.
-3. **Revocation** — If the binding is active (`endTimestamp == 0`) but the resolved address no longer matches the authority, sends a `removeEnsBinding(node)` transaction.
+2. **Staleness check** — When a change is detected, reads the on-chain binding via `indelible`'s `ens` helpers and compares the stored `authority` to the current `resolveIndelibleAddress` result.
+3. **Revocation** — If the binding is active but the resolved address no longer matches the authority, sends a `removeEnsBinding(node)` transaction.
 4. **Periodic polling** — As a safety net, periodically scans all active bindings to catch any missed events.
 
 ## Setup

@@ -1,8 +1,4 @@
-// IndelibleENS contract ABI — sourced from @indelible-world/indelible-protocol
-import ensAbiJson from "@indelible-world/indelible-protocol/abi/ens";
-export const indelibleEnsAbi = ensAbiJson as typeof ensAbiJson;
-
-// ENS PublicResolver TextChanged event ABI
+// ENS PublicResolver TextChanged event ABI (standard ENS, not part of the `indelible` package)
 export const resolverTextChangedAbi = [
   {
     anonymous: false,

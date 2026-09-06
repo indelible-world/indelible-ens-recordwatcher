@@ -3,20 +3,17 @@ import {
   createWalletClient,
   http,
   webSocket,
+  ContractFunctionRevertedError,
   type Address,
   type Hex,
-  keccak256,
-  toHex,
-  getContract,
+  type PublicClient,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { mainnet } from "viem/chains";
+import ensAbi from "indelible/abi/ens";
+import { ens } from "indelible";
 import { config } from "./config.js";
-import {
-  indelibleEnsAbi,
-  resolverTextChangedAbi,
-  ensRegistryAbi,
-} from "./abi.js";
+import { resolverTextChangedAbi, ensRegistryAbi } from "./abi.js";
 
 // ---------- clients ----------
 
@@ -26,26 +23,12 @@ const transport = config.rpcUrl.startsWith("ws")
 
 const chain = { ...mainnet, id: config.chainId };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const publicClient: any = createPublicClient({ chain, transport });
+const publicClient: PublicClient = createPublicClient({ chain, transport });
 
 const account = privateKeyToAccount(config.privateKey);
 const walletClient = createWalletClient({ account, chain, transport });
 
-// ---------- contracts ----------
-
-const indelibleEns = getContract({
-  address: config.indelibleEnsAddress,
-  abi: indelibleEnsAbi,
-  client: { public: publicClient, wallet: walletClient },
-});
-
-// ---------- helpers ----------
-
-/** keccak256 of "indelible-address" — used to match the indexed key in TextChanged */
-const INDELIBLE_ADDRESS_KEY_HASH = keccak256(
-  toHex("indelible-address")
-);
+const ensOpts = { ensIndelibleAddress: config.indelibleEnsAddress };
 
 /**
  * Check whether a binding for `node` is active but stale (the on-chain
@@ -53,52 +36,38 @@ const INDELIBLE_ADDRESS_KEY_HASH = keccak256(
  */
 async function checkAndRevoke(node: Hex): Promise<boolean> {
   try {
-    const bindingIndex = await publicClient.readContract({
-      address: config.indelibleEnsAddress,
-      abi: indelibleEnsAbi,
-      functionName: "nodeToBinding",
-      args: [node],
-    });
+    const binding = await ens.getBindingByNode(publicClient, node, ensOpts);
 
-    if (bindingIndex === 0n) {
+    if (!binding) {
       console.log(`  No binding exists for node ${node}`);
       return false;
     }
 
-    const verification = await publicClient.readContract({
-      address: config.indelibleEnsAddress,
-      abi: indelibleEnsAbi,
-      functionName: "verifications",
-      args: [bindingIndex],
-    });
-
-    const [authority, , , , endTimestamp] = verification;
-
-    if (endTimestamp !== 0n) {
+    if (!binding.isActive) {
       console.log(`  Binding for node ${node} already revoked`);
       return false;
     }
 
-    const resolvedAddr = await publicClient.readContract({
-      address: config.indelibleEnsAddress,
-      abi: indelibleEnsAbi,
-      functionName: "resolveIndelibleAddress",
-      args: [node],
-    });
+    const resolvedAddr = await ens.resolveIndelibleAddress(
+      publicClient,
+      binding.dnsName,
+      node,
+      ensOpts
+    );
 
-    if (resolvedAddr === authority) {
+    if (resolvedAddr?.toLowerCase() === binding.authority.toLowerCase()) {
       console.log(`  Binding for node ${node} is still valid`);
       return false;
     }
 
     console.log(
       `  Stale binding detected for node ${node}:`,
-      `authority=${authority}, resolved=${resolvedAddr}. Revoking...`
+      `authority=${binding.authority}, resolved=${resolvedAddr}. Revoking...`
     );
 
     const txHash = await walletClient.writeContract({
       address: config.indelibleEnsAddress,
-      abi: indelibleEnsAbi,
+      abi: ensAbi,
       functionName: "removeEnsBinding",
       args: [node],
       chain,
@@ -198,6 +167,55 @@ export function watchResolverChanges() {
 
 // ---------- polling ----------
 
+const MAX_READ_RETRIES = 3;
+
+/** Whether `err` is a genuine contract revert (e.g. array out-of-bounds), not a transient RPC/network error. */
+function isContractRevert(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    "walk" in err &&
+    typeof (err as { walk: unknown }).walk === "function" &&
+    (err as { walk: (fn: (e: unknown) => boolean) => unknown }).walk(
+      (e) => e instanceof ContractFunctionRevertedError
+    ) != null
+  );
+}
+
+/**
+ * Read `verifications(index)` directly (bypassing indelible's `ens.getVerification`,
+ * which swallows every error — including transient RPC failures — as "end of array").
+ * Distinguishes a real out-of-bounds revert (end of the array) from a transient
+ * RPC error (retried). Returns `null` only once the array has genuinely been exhausted.
+ */
+async function readVerificationAtIndex(
+  index: number
+): Promise<{ node: Hex; isActive: boolean } | null> {
+  for (let attempt = 0; attempt <= MAX_READ_RETRIES; attempt++) {
+    try {
+      const result = (await publicClient.readContract({
+        address: config.indelibleEnsAddress,
+        abi: ensAbi,
+        functionName: "verifications",
+        args: [BigInt(index)],
+      })) as [Address, Hex, Hex, bigint, bigint];
+      const [, node, , , endTimestamp] = result;
+      return { node, isActive: endTimestamp === 0n };
+    } catch (err) {
+      if (isContractRevert(err)) return null;
+      if (attempt === MAX_READ_RETRIES) {
+        throw new Error(
+          `Failed to read verifications(${index}) after ${MAX_READ_RETRIES + 1} attempts`,
+          { cause: err }
+        );
+      }
+      console.warn(
+        `  [poll] Transient error reading verifications(${index}), retrying (${attempt + 1}/${MAX_READ_RETRIES})...`
+      );
+    }
+  }
+  return null;
+}
+
 /**
  * Scan all verifications in the contract and revoke any that are stale.
  * This acts as a safety net in case events are missed.
@@ -206,32 +224,20 @@ export async function pollAllBindings() {
   console.log("[poll] Scanning all active bindings...");
 
   try {
-    // Find the total number of verifications by binary-searching for a revert.
-    // The verifications array is public, so we read indices until one fails.
-    let index = 1n; // Index 0 is the dummy entry
+    // The verifications array is public; index 0 is a dummy entry, so read
+    // sequentially until we hit a genuine out-of-bounds revert (end of array).
+    let index = 1;
     const nodesToCheck: Hex[] = [];
 
     while (true) {
-      try {
-        const verification = await publicClient.readContract({
-          address: config.indelibleEnsAddress,
-          abi: indelibleEnsAbi,
-          functionName: "verifications",
-          args: [index],
-        });
+      const verification = await readVerificationAtIndex(index);
+      if (!verification) break;
 
-        const [, node, , , endTimestamp] = verification;
-
-        // Only check active (non-revoked) bindings
-        if (endTimestamp === 0n && node !== "0x0000000000000000000000000000000000000000000000000000000000000000") {
-          nodesToCheck.push(node);
-        }
-
-        index++;
-      } catch {
-        // Reached the end of the array
-        break;
+      if (verification.isActive) {
+        nodesToCheck.push(verification.node);
       }
+
+      index++;
     }
 
     console.log(
