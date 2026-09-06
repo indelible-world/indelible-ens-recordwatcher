@@ -1,42 +1,38 @@
-import "dotenv/config";
-import { ENS_INDELIBLE_ADDRESS, ENS_REGISTRY_ADDRESS } from "indelible";
+import 'dotenv/config';
+import { createPublicClient, createWalletClient, http, webSocket, isHex, type Address, type Hex } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import { getChainById, ENS_INDELIBLE_ADDRESS, ENS_REGISTRY_ADDRESS } from 'indelible';
 
 function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
+    const value = process.env[name];
+    if (!value) throw new Error(`Missing required environment variable: ${name}`);
+    return value;
 }
 
-export const config = {
-  /** Ethereum RPC URL (must support eth_subscribe for WebSocket, or polling for HTTP) */
-  rpcUrl: requireEnv("RPC_URL"),
+function parseAddressList(value: string | undefined): Address[] {
+    if (!value) return [];
+    return value
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean) as Address[];
+}
 
-  /** Private key of the account that will call removeEnsBinding */
-  privateKey: requireEnv("PRIVATE_KEY") as `0x${string}`,
+const rpcUrl = requireEnv('RPC_URL');
+const privateKey = requireEnv('PRIVATE_KEY') as Hex;
+if (!isHex(privateKey, { strict: true }) || privateKey.length !== 66) {
+    throw new Error('PRIVATE_KEY must be a 0x-prefixed 32-byte hex string');
+}
 
-  /** Deployed IndelibleENS contract address — defaults to the canonical protocol address */
-  indelibleEnsAddress: (process.env.INDELIBLE_ENS_ADDRESS ??
-    ENS_INDELIBLE_ADDRESS) as `0x${string}`,
+export const chainId = Number(process.env.CHAIN_ID ?? 1);
+export const chain = getChainById(chainId);
 
-  /** ENS Registry address — defaults to the canonical address from indelible-protocol */
-  ensRegistryAddress: (process.env.ENS_REGISTRY_ADDRESS ??
-    ENS_REGISTRY_ADDRESS) as `0x${string}`,
+const transport = rpcUrl.startsWith('ws') ? webSocket(rpcUrl) : http(rpcUrl);
 
-  /**
-   * Known ENS resolver addresses to watch for TextChanged events.
-   * Comma-separated. If empty, the watcher will discover resolvers from
-   * NewResolver events on the ENS registry.
-   */
-  resolverAddresses: (process.env.RESOLVER_ADDRESSES ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean) as `0x${string}`[],
+export const account = privateKeyToAccount(privateKey);
+export const publicClient = createPublicClient({ chain, transport });
+export const walletClient = createWalletClient({ account, chain, transport });
 
-  /** How often (ms) to poll all known bindings for staleness (default: 5 min) */
-  pollIntervalMs: Number(process.env.POLL_INTERVAL_MS ?? 300_000),
-
-  /** Chain ID (default: 1 for mainnet) */
-  chainId: Number(process.env.CHAIN_ID ?? 1),
-};
+export const ensIndelibleAddress = (process.env.INDELIBLE_ENS_ADDRESS as Address | undefined) ?? ENS_INDELIBLE_ADDRESS;
+export const ensRegistryAddress = (process.env.ENS_REGISTRY_ADDRESS as Address | undefined) ?? ENS_REGISTRY_ADDRESS;
+export const resolverAddresses = parseAddressList(process.env.RESOLVER_ADDRESSES);
+export const pollIntervalMs = Number(process.env.POLL_INTERVAL_MS ?? 300_000);
